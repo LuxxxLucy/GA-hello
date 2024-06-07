@@ -1,7 +1,5 @@
 use rand::prelude::*;
 
-
-
 const LETTERS: &str = "abcdefghijklmnopqrstuvwxyz ";
 const TARGET_STR: &str = "hello world";
 const POPULATION_SIZE: usize = 48;
@@ -51,7 +49,7 @@ impl Candidate {
     }
 }
 
-fn reset_focus(population: &mut Vec<Candidate>) {
+fn reset_focus(population: &mut [Candidate]) {
     for candidate in population.iter_mut() {
         candidate.in_focus = false;
     }
@@ -76,13 +74,33 @@ fn breed(parent_a: &Candidate, parent_b: &Candidate, mutation_prob: f64) -> Cand
     Candidate::new(text)
 }
 
+enum STATE {
+    Init,
+    ComputeFitness,
+    Reorder,
+    RemoveUnfit,
+    BreedNew,
+}
+
+impl STATE {
+    fn description(&self) -> &'static str {
+        match *self {
+            STATE::Init => "Seeding the population",
+            STATE::ComputeFitness => "Computing fitness",
+            STATE::Reorder => "Sorting by fitness",
+            STATE::RemoveUnfit => "Removing unfit candidates",
+            STATE::BreedNew => "Breeding new candidates",
+        }
+    }
+}
+
 struct GeneticAlgorithm<'a, F>
 where
     F: Fn(&Vec<Candidate>, &str) + 'a,
 {
     population: &'a mut Vec<Candidate>,
     target_str: &'a str,
-    state: usize,
+    state: STATE,
     num_fit_to_keep: usize,
     population_size: usize,
     mutation_prob: f64,
@@ -104,7 +122,7 @@ where
         Self {
             population,
             target_str,
-            state: 0,
+            state: STATE::Init,
             num_fit_to_keep,
             population_size,
             mutation_prob,
@@ -121,50 +139,46 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         reset_focus(self.population);
-        match self.state {
-            0 => {
+        use STATE::*;
+        match &self.state {
+            Init => {
                 if seed_population(self.population, self.population_size, self.target_str.len()) {
-                    (self.callback)(self.population, "Seeding the population");
+                    (self.callback)(self.population, self.state.description());
                     return Some(());
                 } else {
-                    self.state = 1;
+                    self.state = ComputeFitness;
                 }
             }
-            1 => {
+            ComputeFitness => {
                 if compute_fitness(self.population, self.target_str) {
-                    (self.callback)(self.population, "Computing fitness");
+                    (self.callback)(self.population, self.state.description());
                     return Some(());
                 } else {
-                    // println!("done!");
-                    // for c in self.population.iter() {
-                    //     println!("self {} target {} result {}", c.text, self.target_str, c.fitness)
-                    // }
-                    self.state = 2;
+                    self.state = Reorder;
                 }
             }
-            2 => {
+            Reorder => {
                 if reorder_by_fitness(self.population) {
-                    (self.callback)(self.population, "Sorting by fitness");
+                    (self.callback)(self.population, self.state.description());
                     return Some(());
                 } else {
-                    self.state = 3;
+                    self.state = RemoveUnfit;
                 }
             }
-            3 => {
+            RemoveUnfit => {
                 if remove_unfit(self.population, self.num_fit_to_keep) {
-                    (self.callback)(self.population, "Removing unfit candidates");
+                    (self.callback)(self.population, self.state.description());
                     return Some(());
                 }
-                self.state = 4;
+                self.state = BreedNew;
             }
-            4 => {
+            BreedNew => {
                 if breed_new(self.population, self.population_size, self.mutation_prob) {
-                    (self.callback)(self.population, "Breeding new candidates");
+                    (self.callback)(self.population, self.state.description());
                     return Some(());
                 }
-                self.state = 0;
+                self.state = Init;
             }
-            _ => {}
         }
         None
     }
@@ -188,7 +202,7 @@ fn seed_population(
     }
 }
 
-fn compute_fitness<'a>(population: &'a mut Vec<Candidate>, target_str: &'a str) -> bool {
+fn compute_fitness<'a>(population: &'a mut [Candidate], target_str: &'a str) -> bool {
     if let Some(ref mut candidate) = population.iter_mut().find(|c| c.fitness < 0) {
         candidate.set_fitness(target_str);
         candidate.in_focus = true;
@@ -198,28 +212,19 @@ fn compute_fitness<'a>(population: &'a mut Vec<Candidate>, target_str: &'a str) 
     }
 }
 
-fn reorder_by_fitness(population: &mut Vec<Candidate>) -> bool {
-    let _made_swap = false;
+fn reorder_by_fitness(population: &mut [Candidate]) -> bool {
+    let mut made_swap = false;
 
     let n = population.len();
     for i in 0..n {
         for j in 0..n - i - 1 {
             if population[j].fitness < population[j + 1].fitness {
                 population.swap(j, j + 1);
-                return true;
+                made_swap = true;
             }
         }
     }
-    false
-
-    // for i in (0..population.len() - 1).step_by(2) {
-    //     if population[i].fitness < population[i + 1].fitness {
-    //         population.swap(i, i + 1);
-    //         made_swap = true;
-    //     }
-    //     println!("first {:?} second  {:?} swap is {:?}", population[i], population[i+1], made_swap);
-    // }
-    // made_swap
+    made_swap
 }
 
 fn remove_unfit(population: &mut Vec<Candidate>, num_fit_to_keep: usize) -> bool {
@@ -270,7 +275,7 @@ fn center_text(text: &str, width: usize) -> String {
     }
 }
 
-fn display(population: &Vec<Candidate>, label: &str, column_width: usize, target_str: &str) {
+fn display(population: &[Candidate], label: &str, column_width: usize, target_str: &str) {
     println!("\n\n");
     println!(
         "\x1b[1m\x1b[96m{}\x1b[0m\n",
@@ -309,7 +314,10 @@ fn main() {
     let mut population: Vec<Candidate> = Vec::new();
 
     let display_callback = move |population: &Vec<Candidate>, label: &str| {
-        // sleep(Duration::from_millis(16));
+        use core::time::Duration;
+        use std::thread::sleep;
+
+        sleep(Duration::from_millis(16));
         print!("\x1b[H\x1b[J");
         display(population, label, column_width, TARGET_STR);
     };
